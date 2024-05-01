@@ -1,0 +1,10 @@
+POST http://localhost:3000/rigister
+Content-Type: application/json
+
+
+{
+
+    "name":"sandeep",
+    "password":"sandeep",
+    "phonenumber":9100480679
+}
