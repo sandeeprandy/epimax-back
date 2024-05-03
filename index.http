@@ -1,10 +1,27 @@
-POST http://localhost:3000/rigister
+POST http://localhost:3000/register
 Content-Type: application/json
-
 
 {
 
-    "name":"sandeep",
-    "password":"sandeep",
+    "name":"laya",
+    "password":"laya",
     "phonenumber":9100480679
 }
+###
+
+POST  http://localhost:3000/login 
+Content-Type: application/json
+
+{
+    "name":"laya",
+    "password":"laya" }
+###
+POST http://localhost:3000/tasks
+Content-Type: application/json
+Authorization: Bearer "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6NSwibmFtZSI6ImxheWEiLCJpYXQiOjE3MTQ3NDIzOTV9.EtmO9Uro_-JkGLaUSaUb7B3yWGxqrBH5Y5MZgS3F3Es"
+
+{
+    "task":"my new task",
+    "description":"gym jana",
+    
+}   

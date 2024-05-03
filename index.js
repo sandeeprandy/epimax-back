@@ -7,165 +7,204 @@ const sqlite3 = require("sqlite3");
 const { open } = require("sqlite");
 const path = require("path");
 
-app.use(express.json());
 app.use(cors());
-const dbpath = path.join(__dirname, "database.db");
-let db=null 
+app.use(express.json());
 
-//conect db and server
-const indbtosrver = async () => {
+const dbPath = path.join(__dirname, "database.db");
+let db = null;
+
+// Connecting database to server
+const initializeServerAndDatabase = async () => {
   try {
     db = await open({
-      filename: dbpath,
+      filename: dbPath,
       driver: sqlite3.Database,
     });
     app.listen(3000, () => {
-      console.log("erver is running in 3000localhost");
+      console.log(`Server is running on http://localhost:3000/`);
     });
   } catch (e) {
-    console.log(`db has error : ${e.messege}`);
+    console.log(`DB Error : ${e.message}`);
   }
 };
-indbtosrver();
 
-//new user adding
+initializeServerAndDatabase();
 
-app.post("/rigister", async (request, response) => {
+// Authentication user middleware
+const authenticateToken = (request, response, next) => {
+  const token = request.headers.authorization;
+  console.log(token);
+  if (!token) {
+    return response.status(401).send("No Token from user");
+  }
+  const tokenParts = token.split(" ");
+  const jwtToken = tokenParts[1];
+  jwt.verify(jwtToken, "Token", (err, payload) => {
+    if (err) {
+      console.error("Token Verification Error:", err);
+      return response.status(403).send("Unauthorized - Invalid token");
+    }
+    request.user = payload; // Storing  payload user information in request object
+    next();
+  });
+};
+
+// Registering new user
+app.post("/register", async (request, response) => {
+  const { name, password, phonenumber } = request.body;
+
   try {
-    const { name, password, phonenumber } = request.body;
+    const dbUser = await db.get(`SELECT * FROM users WHERE name=?`, [name]);
+    if (dbUser !== undefined) {
+      return response.status(409).send("name Already Exists");
+    }
 
-    const checkuser = await db.get(`SELECT * FROM users WHERE name = ?`, [
-      name,
+    const hashedPassword = await bcrypt.hash(password, 10);
+    const createNewUserQuery = `
+            INSERT INTO users(name,  password,phonenumber)
+            VALUES (?, ?, ?);
+        `;
+    await db.run(createNewUserQuery, [name, hashedPassword, phonenumber]);
+    response.status(201).send("add user Successfully");
+  } catch (error) {
+    console.log("Error registering user:", error.message);
+    response.status(500).send("Internal Server Error");
+  }
+});
+
+// Login with user credentials
+app.post("/login", async (request, response) => {
+  const { name, password } = request.body;
+  try {
+    const dbUser = await db.get(`SELECT * FROM users WHERE name = ?`, [name]);
+    if (!dbUser) {
+      return response.status(400).send("User Not Found");
+    }
+
+    const isPasswordSame = await bcrypt.compare(password, dbUser.password);
+    if (!isPasswordSame) {
+      return response.status(400).send("Password Not Same");
+    }
+
+    const payload = {
+      id: dbUser.id,
+      name: dbUser.name,
+    };
+
+    const jwtToken = jwt.sign(payload, "Token");
+    response.status(200).send({ jwtToken, isAdmin: dbUser.isAdmin });
+  } catch (error) {
+    console.log("Error logging in:", error.message);
+    response.status(500).send("Internal Server Error");
+  }
+});
+
+// Getting all tasks
+app.post("/tasks", authenticateToken, async (request, response) => {
+  const dbUser = await db.get(`SELECT * FROM users WHERE name = ?`, [
+    request.user.name,
+  ]);
+
+  console.log(dbUser);
+  const { task, description } = request.body;
+  try {
+    const createNewTaskQuery = `
+            INSERT INTO tasks(task, description,  user_id)
+            VALUES (?, ?, ?);
+        `;
+    await db.run(createNewTaskQuery, [task, description, getid]);
+    response.status(201).send("Task Created Successfully");
+  } catch (error) {
+    console.log("Error creating task:", error.message);
+    response.status(500).send("Internal Server Error");
+  }
+});
+
+// Getting all users
+app.get("/users", authenticateToken, async (request, response) => {
+  try {
+    const getAllUsersQuery = `SELECT name FROM users;`;
+    const userList = await db.all(getAllUsersQuery);
+    response.send(userList);
+  } catch (error) {
+    console.log("Error retrieving users:", error.message);
+    response.status(500).send("Internal Server Error");
+  }
+});
+
+// Deleting user only - admin
+app.delete("/users/:userId", authenticateToken, async (request, response) => {
+  const { userId } = request.params;
+  try {
+    const dbUser = await db.get(`SELECT * FROM users WHERE name = ?`, [
+      request.user.name,
     ]);
 
-    if (checkuser !== undefined) {
-      return response.status(400).send("useralreadyexist");
-    }
-    const haspasword = await bcrypt.hash(password, 10);
-    await db.run(
-      `INSERT INTO users (name,password,phonenumber) VALUES (?,?,?) `,
-      [name, haspasword, phonenumber]
-    );
-    console.log("rigister sucess");
-    response.status(200).send("new user add");
-  } catch (err) {
-    console.log(err.messege);
-    response.status(400).send(`error has :${err.messege}`);
+    const deleteQuery = `DELETE FROM users WHERE id = ?`;
+    await db.run(deleteQuery, [userId]);
+    response.send("Successfully Deleted");
+  } catch (error) {
+    console.log("Error deleting task:", error.message);
+    response.status(500).send("Internal Server Error");
   }
 });
 
-//checkvalid user
-function authenticateToken(req, res, next) {
-  const authHeader = req.headers['authorization'];
-  const token = authHeader && authHeader.split(' ')[1];
-  if (!token) {
-      return res.sendStatus(401); // Unauthorized
+// Getting all tasks
+app.get("/tasks", authenticateToken, async (request, response) => {
+  try {
+    const getAllTasksQuery = `SELECT * FROM tasks;`;
+    const taskList = await db.all(getAllTasksQuery);
+    response.json(taskList);
+  } catch (error) {
+    console.log("Error retrieving tasks:", error.message);
+    response.status(500).send("Internal Server Error");
   }
-
-  jwt.verify(token, 'your-secret-key', (err, user) => {
-      if (err) {
-          return res.sendStatus(403); // Forbidden
-      }
-      req.user = user;
-      next();
-  });
-}
-
-// Create task
-app.post('/tasks', authenticateToken, (req, res) => {
-  const { title, description } = req.body;
-  const userId = req.user.userId;
-  const sql = `INSERT INTO tasks (title, description, user_id) VALUES (?, ?, ?)`;
-  db.run(sql, [title, description, userId], function(err) {
-      if (err) {
-          return res.status(500).json({ error: err.message });
-      }
-      res.json({
-          message: 'Task created successfully',
-          taskId: this.lastID
-      });
-  });
 });
 
-// Read all tasks
-app.get('/tasks', authenticateToken, (req, res) => {
-  const userId = req.user.userId;
-  const sql = `SELECT * FROM tasks WHERE user_id = ?`;
-  db.all(sql, [userId], (err, rows) => {
-      if (err) {
-          return res.status(500).json({ error: err.message });
-      }
-      res.json(rows);
-  });
+app.get("/tasks/:taskId", authenticateToken, async (request, response) => {
+  const { taskId } = request.params;
+  try {
+    const getTaskQuery = `SELECT * FROM tasks WHERE id = ?`;
+    const result = await db.get(getTaskQuery, [taskId]);
+    response.send(result);
+  } catch (error) {
+    console.log("Error retrieving task:", error.message);
+    response.status(500).send("Internal Server Error");
+  }
 });
 
-// Read task by ID
-app.get('/tasks/:id', authenticateToken, (req, res) => {
-  const userId = req.user.userId;
-  const taskId = req.params.id;
-  const sql = `SELECT * FROM tasks WHERE id = ? AND user_id = ?`;
-  db.get(sql, [taskId, userId], (err, row) => {
-      if (err) {
-          return res.status(500).json({ error: err.message });
-      }
-      if (!row) {
-          return res.status(404).json({ message: 'Task not found' });
-      }
-      res.json(row);
-  });
+// Updating specific task with task id
+app.put("/tasks/:taskId", authenticateToken, async (request, response) => {
+  const { taskId } = request.params;
+  const { task, description } = request.body;
+  try {
+    const updateTaskQuery = `
+            UPDATE tasks SET
+            task=?,
+            description=?,
+            WHERE id=?
+        `;
+    await db.run(updateTaskQuery, [task, description, taskId]);
+    response.send("Task Updated");
+  } catch (error) {
+    console.log("Error updating task:", error.message);
+    response.status(500).send("Internal Server Error");
+  }
 });
 
-// Update task by ID
-app.put('/tasks/:id', authenticateToken, (req, res) => {
-  const userId = req.user.userId;
-  const taskId = req.params.id;
-  const { title, description } = req.body;
-  const sql = `UPDATE tasks SET title = ?, description = ? WHERE id = ? AND user_id = ?`;
-  db.run(sql, [title, description, taskId, userId], function(err) {
-      if (err) {
-          return res.status(500).json({ error: err.message });
-      }
-      res.json({ message: 'Task updated successfully' });
-  });
+// Deleting specific task with task id
+app.delete("/tasks/:taskId", authenticateToken, async (request, response) => {
+  const { taskId } = request.params;
+  try {
+    const deleteQuery = `DELETE FROM tasks WHERE id = ?`;
+    await db.run(deleteQuery, [taskId]);
+    response.send("Successfully Deleted");
+  } catch (error) {
+    console.log("Error deleting task:", error.message);
+    response.status(500).send("Internal Server Error");
+  }
 });
-
-// Delete task by ID
-app.delete('/tasks/:id', authenticateToken, (req, res) => {
-  const userId = req.user.userId;
-  const taskId = req.params.id;
-  const sql = `DELETE FROM tasks WHERE id = ? AND user_id = ?`;
-  db.run(sql, [taskId, userId], function(err) {
-      if (err) {
-          return res.status(500).json({ error: err.message });
-      }
-      res.json({ message: 'Task deleted successfully' });
-  });
-});
-
-app.post('/login', (req, res) => {
-  const { username, password } = req.body;
-  const sql = `SELECT id FROM users WHERE username = ? AND password = ?`;
-  db.get(sql, [username, password], (err, row) => {
-      if (err) {
-          return res.status(400).json({ error: err.message });
-      }
-      if (!row) {
-          return res.status(401).json({ message: 'Invalid username or password' });
-      }
-      const userId = row.id;
-      const token = jwt.sign({ userId, username }, 'your-secret-key');
-      res.json({ token });
-  });
-});
-
-
-
-
-
-
-
-
 
 app.get("/", (request, response) => {
-  response.send("server is running");
+  response.send("succses");
 });
